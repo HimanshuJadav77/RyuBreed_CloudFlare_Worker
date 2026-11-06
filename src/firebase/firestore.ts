@@ -128,7 +128,7 @@ export class FirestoreClient {
       ) {
         return { healthy: true, latencyMs: 0 };
       }
-      const url = `${this.baseUrl}?pageSize=1`;
+      const url = `${this.baseUrl}/institutes?pageSize=1`;
       const res = await this.fetchAuth(url);
       const latencyMs = Date.now() - start;
       if (res.ok) {
