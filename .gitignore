@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Environment variables & secrets (CRITICAL: contains private keys & tokens)
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# Cloudflare Wrangler build & runtime cache
+.wrangler/
+dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Service Account credentials & private keys
+*.json.key
+serviceAccountKey.json
+*adminsdk*.json
+*.pem
+*.key
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+

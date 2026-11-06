@@ -1,0 +1,29 @@
+# Cloudflare Worker Environment Variables & Secrets Example
+# Copy this file to .dev.vars for local testing or configure these in Cloudflare Dashboard:
+# Workers & Pages -> ryubreed-subscription-api -> Settings -> Variables and Secrets
+
+# Mandatory: Google Service Account for Privileged Firestore REST API & FCM
+FIREBASE_PROJECT_ID="ryubreedacademia-demo"
+FIREBASE_CLIENT_EMAIL="firebase-adminsdk-xxxxx@ryubreedacademia-demo.iam.gserviceaccount.com"
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n"
+
+# Admin API Key (Authorizes server-to-server calls from the dedicated Node.js admin dashboard)
+ADMIN_API_KEY="generate-a-strong-random-64-char-secret-for-server-to-server-auth"
+
+# Designated Administrator Firebase Auth UID (matches login user ID)
+ADMIN_ID="r8gGkQN9nbWcLjIdSJV7zuYYEFC2"
+ADMIN_UID="r8gGkQN9nbWcLjIdSJV7zuYYEFC2"
+ADMIN_BOOTSTRAP_UID="r8gGkQN9nbWcLjIdSJV7zuYYEFC2"
+
+# Dedicated Node.js Admin Dashboard URL (Worker redirects GET /admin here)
+ADMIN_DASHBOARD_URL="https://admin.ryubreed.com"
+
+# Allowed Origins for CORS (comma-separated list of browser origins)
+# In production, specify exact client origins; DO NOT use '*' when authenticated browser access is involved.
+# Note: Native mobile apps (Android/iOS) and server-to-server calls do not send Origin and are never blocked.
+ALLOWED_ORIGINS="https://academia.ryubreed.com,https://admin.ryubreed.com,http://localhost:3000"
+
+# Optional: Razorpay Credentials (Leave empty until production keys are acquired)
+RAZORPAY_KEY_ID=""
+RAZORPAY_KEY_SECRET=""
+RAZORPAY_WEBHOOK_SECRET=""
