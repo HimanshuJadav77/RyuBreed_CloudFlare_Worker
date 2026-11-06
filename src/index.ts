@@ -20,6 +20,8 @@ import {
   handleAdminExtendSubscription,
   handleAdminRevokeSubscription,
   handleAdminAuditLogs,
+  handleAdminGetPlans,
+  handleAdminUpdatePlans,
 } from './routes/admin-routes';
 import { createRateLimiter, rateLimitKeys } from './utils/rate-limiter';
 
@@ -123,7 +125,7 @@ export default {
         return await handleHealth(firestore, allowOrigin || '*');
       }
       if (path === '/subscription/plans' && method === 'GET') {
-        return handlePlans(allowOrigin || '*');
+        return await handlePlans(firestore, allowOrigin || '*');
       }
 
       // Subscription authenticated routes
@@ -177,6 +179,12 @@ export default {
       }
       if (path === '/admin/subscriptions/revoke' && method === 'POST') {
         return await handleAdminRevokeSubscription(request, env, firestore, allowOrigin || '*');
+      }
+      if (path === '/admin/plans' && method === 'GET') {
+        return await handleAdminGetPlans(request, env, firestore, allowOrigin || '*');
+      }
+      if (path === '/admin/plans' && (method === 'PUT' || method === 'POST')) {
+        return await handleAdminUpdatePlans(request, env, firestore, allowOrigin || '*');
       }
       if (path === '/admin/audit-logs' && method === 'GET') {
         return await handleAdminAuditLogs(request, env, firestore, allowOrigin || '*');

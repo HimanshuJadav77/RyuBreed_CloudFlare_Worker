@@ -18,6 +18,7 @@ const SUBSCRIPTION_PLANS = [
     id: 'core99',
     name: 'Core Plan',
     priceINR: 99,
+    annualPriceINR: 948,
     durationDays: 30,
     features: [
       'Up to 150 Students',
@@ -32,6 +33,7 @@ const SUBSCRIPTION_PLANS = [
     id: 'smart199',
     name: 'Smart Plan',
     priceINR: 199,
+    annualPriceINR: 1908,
     durationDays: 30,
     features: [
       'Unlimited Students, Batches & Staff',
@@ -1102,9 +1104,22 @@ class PaymentService {
     );
   }
 
-  async createOrder(instituteId, planId, userUid) {
-    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+  async getActivePlans() {
+    try {
+      const doc = await this.firestore.getDocument('system_config/plans');
+      if (doc && Array.isArray(doc.plans) && doc.plans.length > 0) {
+        return doc.plans;
+      }
+    } catch {}
+    return SUBSCRIPTION_PLANS;
+  }
+
+  async createOrder(instituteId, planId, userUid, isAnnual = false) {
+    const plans = await this.getActivePlans();
+    const plan = plans.find((p) => p.id === planId) || SUBSCRIPTION_PLANS.find((p) => p.id === planId);
     if (!plan) throw new AppError('Invalid plan ID: ' + planId, 400);
+
+    const effectivePriceINR = isAnnual ? (plan.annualPriceINR || plan.priceINR * 12) : plan.priceINR;
 
     if (!this.isConfigured()) {
       return {
@@ -1113,11 +1128,12 @@ class PaymentService {
         code: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
         message: 'Razorpay payment gateway credentials (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET) are not configured on the backend. Subscriptions cannot be purchased yet. Please use the 7-day trial or contact institute administration.',
         planId: plan.id,
-        amountINR: plan.priceINR,
+        amountINR: effectivePriceINR,
+        isAnnual: Boolean(isAnnual),
       };
     }
 
-    const amountInPaise = plan.priceINR * 100;
+    const amountInPaise = effectivePriceINR * 100;
     const authHeader = btoa(this.env.RAZORPAY_KEY_ID + ':' + this.env.RAZORPAY_KEY_SECRET);
 
     const res = await fetch('https://api.razorpay.com/v1/orders', {
@@ -1127,7 +1143,7 @@ class PaymentService {
         amount: amountInPaise,
         currency: 'INR',
         receipt: 'rcpt_' + instituteId.substring(0, 8) + '_' + Date.now(),
-        notes: { instituteId, planId: plan.id, requestedBy: userUid },
+        notes: { instituteId, planId: plan.id, isAnnual: String(Boolean(isAnnual)), requestedBy: userUid },
       }),
     });
 
@@ -1139,7 +1155,7 @@ class PaymentService {
 
     const orderData = await res.json();
     await this.firestore.setDocument('institutes/' + instituteId + '/subscription_orders/' + orderData.id, {
-      orderId: orderData.id, instituteId, planId: plan.id, amount: plan.priceINR, currency: 'INR', status: 'created', createdAt: nowIso(),
+      orderId: orderData.id, instituteId, planId: plan.id, amount: effectivePriceINR, isAnnual: Boolean(isAnnual), currency: 'INR', status: 'created', createdAt: nowIso(),
     });
 
     return {
@@ -1151,6 +1167,7 @@ class PaymentService {
       currency: orderData.currency,
       planId: plan.id,
       planName: plan.name,
+      isAnnual: Boolean(isAnnual),
     };
   }
 
@@ -1171,7 +1188,8 @@ class PaymentService {
     }
 
     // 2. Validate plan ID against valid subscription plans
-    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+    const plans = await this.getActivePlans();
+    const plan = plans.find((p) => p.id === planId) || SUBSCRIPTION_PLANS.find((p) => p.id === planId);
     if (!plan) {
       throw new AppError('Invalid subscription plan specified: ' + planId, 400, 'INVALID_PLAN');
     }
@@ -1215,18 +1233,22 @@ class PaymentService {
 
     // 5. Look up stored order to verify plan and amount binding
     const orderDoc = await this.firestore.getDocument('institutes/' + instituteId + '/subscription_orders/' + orderId);
+    const isAnnualOrder = Boolean(orderDoc?.isAnnual);
+    const expectedPriceINR = isAnnualOrder ? (plan.annualPriceINR || plan.priceINR * 12) : plan.priceINR;
+
     if (orderDoc) {
       if (orderDoc.planId && orderDoc.planId !== planId) {
         throw new AppError('Plan mismatch: Requested plan (' + planId + ') does not match order plan (' + orderDoc.planId + ')', 400, 'PLAN_MISMATCH');
       }
-      if (orderDoc.amount && Number(orderDoc.amount) !== plan.priceINR) {
+      if (orderDoc.amount && Number(orderDoc.amount) !== expectedPriceINR) {
         throw new AppError('Price mismatch: Plan price does not match recorded order amount', 400, 'PRICE_MISMATCH');
       }
     }
 
     // 6. Concurrency-Safe Atomic Activation via Firestore Batch Write
     const startAt = nowUtc();
-    const endAt = addDays(startAt, plan.durationDays);
+    const durationDays = isAnnualOrder ? 365 : (plan.durationDays || 30);
+    const endAt = addDays(startAt, durationDays);
     const subscriptionId = 'sub_' + instituteId + '_' + Date.now();
     const licenseKey = 'LIC-PAID-' + plan.id.toUpperCase() + '-' + Date.now().toString().slice(-6);
 
@@ -1653,7 +1675,12 @@ export default {
         }, isHealthy ? 200 : 503, origin);
       }
       if (path === '/subscription/plans' && method === 'GET') {
-        return jsonResponse({ success: true, plans: SUBSCRIPTION_PLANS, trialDurationDays: 7 }, 200, origin);
+        let plans = SUBSCRIPTION_PLANS;
+        try {
+          const doc = await firestore.getDocument('system_config/plans');
+          if (doc && Array.isArray(doc.plans) && doc.plans.length > 0) plans = doc.plans;
+        } catch {}
+        return jsonResponse({ success: true, plans, trialDurationDays: 7 }, 200, origin);
       }
 
       // Authentication helper
@@ -1708,8 +1735,9 @@ export default {
         const body = await parseJsonBody(request);
         const { user, instituteId } = await getAuthUser(body.instituteId);
         const planId = assertRequiredString(body.planId, 'planId');
-        const data = await new PaymentService(env, firestore).createOrder(instituteId, planId, user.uid);
-        return jsonResponse({ success: data.success, data }, 200, origin);
+        const isAnnual = Boolean(body.isAnnual);
+        const data = await new PaymentService(env, firestore).createOrder(instituteId, planId, user.uid, isAnnual);
+        return jsonResponse({ success: data.success, ...data, data }, 200, origin);
       }
       if (path === '/subscription/verify-payment' && method === 'POST') {
         const body = await parseJsonBody(request);
@@ -1902,6 +1930,38 @@ export default {
         await getAuthAdmin();
         const list = await firestore.runQuery('subscription_audit_logs', [], 100);
         return jsonResponse({ success: true, count: list.length, data: list }, 200, origin);
+      }
+      if (path === '/admin/plans' && method === 'GET') {
+        await getAuthAdmin();
+        let plans = SUBSCRIPTION_PLANS;
+        try {
+          const doc = await firestore.getDocument('system_config/plans');
+          if (doc && Array.isArray(doc.plans) && doc.plans.length > 0) plans = doc.plans;
+        } catch {}
+        return jsonResponse({ success: true, plans }, 200, origin);
+      }
+      if (path === '/admin/plans' && (method === 'PUT' || method === 'POST')) {
+        const admin = await getAuthAdmin();
+        const body = await parseJsonBody(request);
+        if (!body.plans || !Array.isArray(body.plans) || body.plans.length === 0) {
+          throw new AppError('Invalid plans: Array of plans is required', 400);
+        }
+        const sanitizedPlans = body.plans.map((p) => {
+          const id = assertRequiredString(p.id, 'plan.id');
+          const name = assertRequiredString(p.name, 'plan.name');
+          const priceINR = assertRequiredNumber(p.priceINR, 'plan.priceINR');
+          if (priceINR < 1) throw new AppError('Plan price for ' + name + ' must be at least ₹1', 400);
+          const annualPriceINR = typeof p.annualPriceINR === 'number' && p.annualPriceINR >= 1 ? p.annualPriceINR : priceINR * 12;
+          const durationDays = typeof p.durationDays === 'number' && p.durationDays > 0 ? p.durationDays : 30;
+          const features = Array.isArray(p.features) ? p.features.filter((f) => typeof f === 'string') : [];
+          return { id, name, priceINR, annualPriceINR, durationDays, features };
+        });
+        const payload = { plans: sanitizedPlans, updatedAt: nowIso(), updatedBy: admin.uid };
+        await firestore.setDocument('system_config/plans', payload);
+        await firestore.setDocument('subscription_audit_logs/' + Date.now() + '_plans_update', {
+          action: 'PLANS_UPDATED', adminUid: admin.uid, plans: sanitizedPlans, timestamp: nowIso()
+        });
+        return jsonResponse({ success: true, plans: sanitizedPlans, message: 'Subscription plans updated successfully' }, 200, origin);
       }
 
       return new Response(JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: 'Route ' + method + ' ' + path + ' not found' } }), {

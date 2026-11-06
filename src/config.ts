@@ -24,6 +24,7 @@ export const SUBSCRIPTION_PLANS = [
     id: 'core99',
     name: 'Core Plan',
     priceINR: 99,
+    annualPriceINR: 948,
     durationDays: 30,
     features: [
       'Up to 150 Students',
@@ -38,6 +39,7 @@ export const SUBSCRIPTION_PLANS = [
     id: 'smart199',
     name: 'Smart Plan',
     priceINR: 199,
+    annualPriceINR: 1908,
     durationDays: 30,
     features: [
       'Unlimited Students, Batches & Staff',

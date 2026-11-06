@@ -100,11 +100,12 @@ export async function handleCreateOrder(
     body.instituteId as string | undefined
   );
   const planId = assertRequiredString(body.planId, 'planId');
+  const isAnnual = Boolean(body.isAnnual);
 
   const paymentService = new PaymentService(env, firestore);
-  const orderResult = await paymentService.createOrder(instituteId, planId, user.uid);
+  const orderResult = await paymentService.createOrder(instituteId, planId, user.uid, isAnnual);
 
-  return jsonResponse({ success: orderResult.success, data: orderResult }, 200, origin);
+  return jsonResponse({ success: orderResult.success, ...orderResult, data: orderResult }, 200, origin);
 }
 
 export async function handleVerifyPayment(

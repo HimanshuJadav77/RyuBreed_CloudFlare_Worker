@@ -21,11 +21,28 @@ export class PaymentService {
     );
   }
 
-  async createOrder(instituteId: string, planId: string, userUid: string) {
-    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+  async getActivePlans(): Promise<typeof SUBSCRIPTION_PLANS> {
+    try {
+      const doc = await this.firestore.getDocument<{ plans?: any[] }>('system_config/plans');
+      if (doc && Array.isArray(doc.plans) && doc.plans.length > 0) {
+        return doc.plans as any;
+      }
+    } catch {
+      // Fallback to static
+    }
+    return SUBSCRIPTION_PLANS;
+  }
+
+  async createOrder(instituteId: string, planId: string, userUid: string, isAnnual = false) {
+    const plans = await this.getActivePlans();
+    const plan = plans.find((p) => p.id === planId) || SUBSCRIPTION_PLANS.find((p) => p.id === planId);
     if (!plan) {
       throw new AppError(`Invalid plan ID: ${planId}`, 400);
     }
+
+    const effectivePriceINR = isAnnual
+      ? (plan.annualPriceINR || plan.priceINR * 12)
+      : plan.priceINR;
 
     if (!this.isConfigured()) {
       return {
@@ -35,12 +52,13 @@ export class PaymentService {
         message:
           'Razorpay payment gateway credentials (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET) are not configured on the backend. Subscriptions cannot be purchased yet. Please use the 7-day trial or contact institute administration.',
         planId: plan.id,
-        amountINR: plan.priceINR,
+        amountINR: effectivePriceINR,
+        isAnnual: Boolean(isAnnual),
       };
     }
 
     // Call Razorpay API to generate order
-    const amountInPaise = plan.priceINR * 100;
+    const amountInPaise = effectivePriceINR * 100;
     const authHeader = btoa(`${this.env.RAZORPAY_KEY_ID}:${this.env.RAZORPAY_KEY_SECRET}`);
 
     const res = await fetch('https://api.razorpay.com/v1/orders', {
@@ -56,6 +74,7 @@ export class PaymentService {
         notes: {
           instituteId,
           planId: plan.id,
+          isAnnual: String(Boolean(isAnnual)),
           requestedBy: userUid,
         },
       }),
@@ -74,7 +93,8 @@ export class PaymentService {
       orderId: orderData.id,
       instituteId,
       planId: plan.id,
-      amount: plan.priceINR,
+      amount: effectivePriceINR,
+      isAnnual: Boolean(isAnnual),
       currency: 'INR',
       status: 'created',
       createdAt: nowIso(),
@@ -89,6 +109,7 @@ export class PaymentService {
       currency: orderData.currency,
       planId: plan.id,
       planName: plan.name,
+      isAnnual: Boolean(isAnnual),
     };
   }
 
@@ -118,7 +139,8 @@ export class PaymentService {
     }
 
     // Validate plan exists
-    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+    const plans = await this.getActivePlans();
+    const plan = plans.find((p) => p.id === planId) || SUBSCRIPTION_PLANS.find((p) => p.id === planId);
     if (!plan) {
       throw new AppError(`Invalid plan ID: ${planId}`, 400, 'INVALID_PLAN_ID');
     }
@@ -179,8 +201,14 @@ export class PaymentService {
     const orderDoc = await this.firestore.getDocument<{
       planId?: string;
       amount?: number;
+      isAnnual?: boolean;
       instituteId?: string;
     }>(`institutes/${instituteId}/subscription_orders/${orderId}`);
+
+    const isAnnualOrder = Boolean(orderDoc?.isAnnual);
+    const expectedPriceINR = isAnnualOrder
+      ? (plan.annualPriceINR || plan.priceINR * 12)
+      : plan.priceINR;
 
     if (orderDoc) {
       if (orderDoc.planId && orderDoc.planId !== plan.id) {
@@ -190,9 +218,9 @@ export class PaymentService {
           'PLAN_MISMATCH'
         );
       }
-      if (orderDoc.amount && orderDoc.amount !== plan.priceINR) {
+      if (orderDoc.amount && orderDoc.amount !== expectedPriceINR) {
         throw new AppError(
-          `Payment tampering detected: Order amount ₹${orderDoc.amount} does not match plan price ₹${plan.priceINR}`,
+          `Payment tampering detected: Order amount ₹${orderDoc.amount} does not match expected plan price ₹${expectedPriceINR}`,
           400,
           'AMOUNT_MISMATCH'
         );
@@ -210,7 +238,8 @@ export class PaymentService {
     }
 
     const startAt = nowUtc();
-    const endAt = addDays(startAt, plan.durationDays);
+    const durationDays = isAnnualOrder ? 365 : (plan.durationDays || 30);
+    const endAt = addDays(startAt, durationDays);
     const subscriptionId = `sub_${instituteId}_${Date.now()}`;
     const licenseKey = `LIC-PAID-${plan.id.toUpperCase()}-${Date.now().toString().slice(-6)}`;
 

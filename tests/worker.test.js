@@ -707,4 +707,114 @@ test('Admin Mutation Idempotency: Duplicate admin mutation with same idempotency
   }
 });
 
+test('Dynamic Plans: Admin can update plan prices and public endpoint reflects modified price', async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256',
+    },
+    true,
+    ['sign', 'verify']
+  );
+  const exported = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+  const b64 = Buffer.from(exported).toString('base64');
+  const validPem = `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----`;
+
+  const originalFetch = globalThis.fetch;
+  let storedPlans = null;
+
+  try {
+    globalThis.fetch = async (url, options = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('oauth2.googleapis.com')) {
+        return new Response(JSON.stringify({ access_token: 'mock_token', expires_in: 3600 }), { status: 200 });
+      }
+      if (urlStr.includes('system_config%2Fplans') || urlStr.includes('system_config/plans')) {
+        if (options.method === 'PATCH' || options.method === 'POST') {
+          const body = JSON.parse(options.body);
+          // Parse from Firestore REST format: fields.plans.arrayValue.values
+          const planValues = body.fields?.plans?.arrayValue?.values || [];
+          storedPlans = planValues.map((v) => ({
+            id: v.mapValue.fields.id.stringValue,
+            name: v.mapValue.fields.name.stringValue,
+            priceINR: Number(v.mapValue.fields.priceINR.integerValue || v.mapValue.fields.priceINR.doubleValue),
+            annualPriceINR: Number(v.mapValue.fields.annualPriceINR?.integerValue || v.mapValue.fields.annualPriceINR?.doubleValue || 0),
+            durationDays: Number(v.mapValue.fields.durationDays?.integerValue || 30),
+          }));
+          return new Response(JSON.stringify(body), { status: 200 });
+        }
+        if (storedPlans) {
+          // Return in Firestore REST format
+          return new Response(
+            JSON.stringify({
+              fields: {
+                plans: {
+                  arrayValue: {
+                    values: storedPlans.map((p) => ({
+                      mapValue: {
+                        fields: {
+                          id: { stringValue: p.id },
+                          name: { stringValue: p.name },
+                          priceINR: { integerValue: String(p.priceINR) },
+                          annualPriceINR: { integerValue: String(p.annualPriceINR) },
+                          durationDays: { integerValue: String(p.durationDays) },
+                        },
+                      },
+                    })),
+                  },
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: 404 } }), { status: 404 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    const envWithAdmin = {
+      ...mockEnv,
+      FIREBASE_PRIVATE_KEY: validPem,
+      ADMIN_API_KEY: 'admin_secret_key_123',
+      SKIP_REVOCATION_CHECK: true,
+    };
+
+    // 1. Admin updates plans (e.g. Core price to ₹1 for testing)
+    const updateReq = new Request('https://api.ryubreed.com/admin/plans', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Api-Key': 'admin_secret_key_123',
+      },
+      body: JSON.stringify({
+        plans: [
+          { id: 'core99', name: 'Core Plan (Testing)', priceINR: 1, annualPriceINR: 10, durationDays: 30, features: ['Test'] },
+          { id: 'smart199', name: 'Smart Plan', priceINR: 2, annualPriceINR: 20, durationDays: 30, features: ['Unlimited'] },
+        ],
+      }),
+    });
+
+    const updateRes = await worker.fetch(updateReq, envWithAdmin, {});
+    assert.equal(updateRes.status, 200);
+    const updateJson = await updateRes.json();
+    assert.equal(updateJson.success, true);
+    assert.equal(updateJson.plans[0].priceINR, 1);
+
+    // 2. Public endpoint returns updated price
+    const publicReq = new Request('https://api.ryubreed.com/subscription/plans', { method: 'GET' });
+    const publicRes = await worker.fetch(publicReq, envWithAdmin, {});
+    assert.equal(publicRes.status, 200);
+    const publicJson = await publicRes.json();
+    assert.equal(publicJson.success, true);
+    assert.equal(publicJson.plans[0].priceINR, 1);
+    assert.equal(publicJson.plans[1].priceINR, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+
 

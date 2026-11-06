@@ -29,11 +29,23 @@ export async function handleHealth(firestore?: FirestoreClient, origin = '*'): P
   );
 }
 
-export function handlePlans(origin = '*'): Response {
+export async function handlePlans(firestore?: FirestoreClient, origin = '*'): Promise<Response> {
+  let plans = SUBSCRIPTION_PLANS;
+  if (firestore) {
+    try {
+      const doc = await firestore.getDocument<{ plans?: any[] }>('system_config/plans');
+      if (doc && Array.isArray(doc.plans) && doc.plans.length > 0) {
+        plans = doc.plans as any;
+      }
+    } catch {
+      // Fallback to static SUBSCRIPTION_PLANS on read error
+    }
+  }
+
   return jsonResponse(
     {
       success: true,
-      plans: SUBSCRIPTION_PLANS,
+      plans,
       trialDurationDays: 7,
     },
     200,
