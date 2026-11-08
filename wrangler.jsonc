@@ -10,9 +10,9 @@
   },
   "vars": {
     "FIREBASE_PROJECT_ID": "ryubreedacedemia",
-    "ADMIN_ID": "r8gGkQN9nbWcLjIdSJV7zuYYEFC2",
-    "ADMIN_UID": "r8gGkQN9nbWcLjIdSJV7zuYYEFC2",
-    "ADMIN_BOOTSTRAP_UID": "r8gGkQN9nbWcLjIdSJV7zuYYEFC2",
+    "ADMIN_ID": "ryubreed_admin_master",
+    "ADMIN_UID": "ryubreed_admin_master",
+    "ADMIN_BOOTSTRAP_UID": "ryubreed_admin_master",
     "ADMIN_DASHBOARD_URL": "http://localhost:3000",
     "ALLOWED_ORIGINS": "https://ryubreedacedemia.web.app,https://ryubreedacedemia.firebaseapp.com,https://academia.ryubreed.com,https://admin.ryubreed.com,http://localhost:3000",
     "ENABLE_PAYMENT_ACTIVATION": "false"

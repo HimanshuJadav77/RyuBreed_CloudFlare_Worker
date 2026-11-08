@@ -1089,6 +1089,43 @@ class TrialService {
   }
 }
 
+function hexToBytes(hex) {
+  if (!hex || typeof hex !== 'string') return null;
+  const trimmed = hex.trim();
+  if (trimmed.length !== 64) {
+    return null;
+  }
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 64; i += 2) {
+    const byte = parseInt(trimmed.slice(i, i + 2), 16);
+    if (Number.isNaN(byte)) {
+      return null;
+    }
+    bytes[i / 2] = byte;
+  }
+  return bytes;
+}
+
+function timingSafeEqualBytes(a, b) {
+  if (!a || !b || a.byteLength !== b.byteLength) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.byteLength; i++) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff === 0;
+}
+
+function verifySignatureConstantTime(expectedBuffer, receivedHex) {
+  const receivedBytes = hexToBytes(receivedHex);
+  if (!receivedBytes) {
+    return false;
+  }
+  const expectedBytes = new Uint8Array(expectedBuffer);
+  return timingSafeEqualBytes(expectedBytes, receivedBytes);
+}
+
 class PaymentService {
   constructor(env, firestore) {
     this.env = env;
@@ -1963,6 +2000,12 @@ export default {
         });
         return jsonResponse({ success: true, plans: sanitizedPlans, message: 'Subscription plans updated successfully' }, 200, origin);
       }
+      if (path === '/admin/cron/trigger-expiry' && method === 'POST') {
+        await getAuthAdmin();
+        const service = new ExpiryService(env, firestore);
+        const result = await service.processDailyExpirations();
+        return jsonResponse({ success: true, result }, 200, origin);
+      }
 
       return new Response(JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: 'Route ' + method + ' ' + path + ' not found' } }), {
         status: 404,
@@ -1994,7 +2037,10 @@ export {
   PaymentService,
   FirestoreClient,
   SUBSCRIPTION_PLANS,
-  DEFAULT_TRIAL_DAYS
+  DEFAULT_TRIAL_DAYS,
+  timingSafeEqualBytes,
+  hexToBytes,
+  verifySignatureConstantTime
 };
 `;
 

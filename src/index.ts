@@ -189,6 +189,11 @@ export default {
       if (path === '/admin/audit-logs' && method === 'GET') {
         return await handleAdminAuditLogs(request, env, firestore, allowOrigin || '*');
       }
+      if (path === '/admin/cron/trigger-expiry' && method === 'POST') {
+        const adminService = new ExpiryService(env, firestore);
+        const result = await adminService.processDailyExpirations();
+        return jsonResponse({ success: true, result }, 200, allowOrigin || '*');
+      }
 
       // Not found
       return new Response(

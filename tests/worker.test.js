@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import worker, { SubscriptionService, TrialService, PaymentService } from '../worker.js';
+import worker, {
+  SubscriptionService,
+  TrialService,
+  PaymentService,
+  timingSafeEqualBytes,
+  hexToBytes,
+  verifySignatureConstantTime,
+} from '../worker.js';
 
 const mockEnv = {
   FIREBASE_PROJECT_ID: 'test-project-id',
@@ -814,6 +821,82 @@ test('Dynamic Plans: Admin can update plan prices and public endpoint reflects m
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// --------------------------------------------------------------------------
+// REG-IMPL-02: Constant-Time Byte Comparison Cryptographic Tests
+// --------------------------------------------------------------------------
+test('REG-IMPL-02: timingSafeEqualBytes compares equal Uint8Arrays in constant time', () => {
+  const bufA = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  const bufB = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.equal(timingSafeEqualBytes(bufA, bufB), true);
+
+  // Mismatched byte at start
+  const diffStart = new Uint8Array([99, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.equal(timingSafeEqualBytes(bufA, diffStart), false);
+
+  // Mismatched byte in middle
+  const diffMid = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 99, 9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.equal(timingSafeEqualBytes(bufA, diffMid), false);
+
+  // Mismatched byte at end
+  const diffEnd = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 99]);
+  assert.equal(timingSafeEqualBytes(bufA, diffEnd), false);
+
+  // Length mismatch
+  const shortBuf = new Uint8Array([1, 2, 3]);
+  assert.equal(timingSafeEqualBytes(bufA, shortBuf), false);
+});
+
+test('REG-IMPL-02: hexToBytes validates 64-character input length and hex encoding', () => {
+  const validHex = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+  const bytes = hexToBytes(validHex);
+  assert.ok(bytes);
+  assert.equal(bytes.length, 32);
+  assert.equal(bytes[0], 0xe3);
+  assert.equal(bytes[31], 0x55);
+
+  // Non-64 length
+  assert.equal(hexToBytes('abc'), null);
+  assert.equal(hexToBytes(''), null);
+  assert.equal(hexToBytes(validHex + '00'), null);
+
+  // Non-hex characters
+  const invalidHex = 'g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85z';
+  assert.equal(hexToBytes(invalidHex), null);
+});
+
+test('REG-IMPL-02: verifySignatureConstantTime verifies HMAC-SHA256 signature without timing side-channel', async () => {
+  const secret = 'rzp_test_secret_key_12345';
+  const payload = 'order_test_123|pay_test_456';
+
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+  const hexSignature = Array.from(new Uint8Array(signatureBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  // Valid signature matches
+  assert.equal(verifySignatureConstantTime(signatureBuffer, hexSignature), true);
+  assert.equal(verifySignatureConstantTime(signatureBuffer, hexSignature.toUpperCase()), true);
+
+  // Tampered 1st character fails
+  const tamperedStart = (hexSignature[0] === 'a' ? 'b' : 'a') + hexSignature.slice(1);
+  assert.equal(verifySignatureConstantTime(signatureBuffer, tamperedStart), false);
+
+  // Tampered last character fails
+  const tamperedEnd = hexSignature.slice(0, 63) + (hexSignature[63] === 'a' ? 'b' : 'a');
+  assert.equal(verifySignatureConstantTime(signatureBuffer, tamperedEnd), false);
+
+  // Truncated signature fails
+  assert.equal(verifySignatureConstantTime(signatureBuffer, hexSignature.slice(0, 60)), false);
 });
 
 

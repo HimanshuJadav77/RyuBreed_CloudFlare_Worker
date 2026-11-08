@@ -3,6 +3,55 @@ import { FirestoreClient } from '../firebase/firestore';
 import { AppError, ConflictError } from '../utils/errors';
 import { addDays, nowIso, nowUtc } from '../utils/dates';
 
+/**
+ * Decodes a 64-character hexadecimal signature string into a 32-byte Uint8Array.
+ * Returns null if length is not exactly 64 or if non-hex characters are present.
+ */
+export function hexToBytes(hex: string): Uint8Array | null {
+  if (!hex || typeof hex !== 'string') return null;
+  const trimmed = hex.trim();
+  if (trimmed.length !== 64) {
+    return null;
+  }
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 64; i += 2) {
+    const byte = parseInt(trimmed.slice(i, i + 2), 16);
+    if (Number.isNaN(byte)) {
+      return null;
+    }
+    bytes[i / 2] = byte;
+  }
+  return bytes;
+}
+
+/**
+ * Constant-time byte comparison using invariant bitwise XOR accumulation loop.
+ * Compatible with Cloudflare Workers (workerd) runtime without Node.js crypto.timingSafeEqual.
+ */
+export function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (!a || !b || a.byteLength !== b.byteLength) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.byteLength; i++) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff === 0;
+}
+
+/**
+ * Validates a Razorpay HMAC-SHA256 hex signature against an expected ArrayBuffer
+ * in constant time without timing side-channel leakage.
+ */
+export function verifySignatureConstantTime(expectedBuffer: ArrayBuffer, receivedHex: string): boolean {
+  const receivedBytes = hexToBytes(receivedHex);
+  if (!receivedBytes) {
+    return false;
+  }
+  const expectedBytes = new Uint8Array(expectedBuffer);
+  return timingSafeEqualBytes(expectedBytes, receivedBytes);
+}
+
 export class PaymentService {
   private env: Env;
   private firestore: FirestoreClient;
@@ -159,11 +208,8 @@ export class PaymentService {
 
     const payload = `${orderId}|${paymentId}`;
     const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-    const expectedSignature = Array.from(new Uint8Array(signatureBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
 
-    if (expectedSignature.toLowerCase() !== signature.trim().toLowerCase()) {
+    if (!verifySignatureConstantTime(signatureBuffer, signature)) {
       throw new AppError('Invalid payment signature verification failed', 400, 'INVALID_SIGNATURE');
     }
 
@@ -406,11 +452,8 @@ export class PaymentService {
     );
 
     const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody));
-    const expectedSignature = Array.from(new Uint8Array(signatureBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
 
-    if (expectedSignature.toLowerCase() !== signatureHeader.trim().toLowerCase()) {
+    if (!verifySignatureConstantTime(signatureBuffer, signatureHeader)) {
       throw new AppError('Invalid webhook signature verification failed', 400, 'INVALID_WEBHOOK_SIGNATURE');
     }
 
